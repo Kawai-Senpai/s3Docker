@@ -2,7 +2,7 @@
 
 > Simplify Docker image distribution using AWS S3 storage
 
-![S3Docker Logo](https://github.com/Kawai-Senpai/s3Docker/tree/89b55439e9a623f31c038260a700159d0f28ecdb/Assets)
+![S3Docker](https://github.com/Kawai-Senpai/s3Docker/blob/40e33f1830598a3351e568caa498d0f9a601dd47/Assets/S3Docker%20Thumbnail.png)
 
 ## 🎯 Why S3Docker?
 
