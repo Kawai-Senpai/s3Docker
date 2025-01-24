@@ -2,6 +2,8 @@
 
 > Simplify Docker image distribution using AWS S3 storage
 
+![S3Docker Logo](assets/S3Docker%20Thumbnail.png)
+
 ## 🎯 Why S3Docker?
 
 Managing Docker images across multiple environments and teams can be challenging:
