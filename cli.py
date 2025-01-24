@@ -2,11 +2,13 @@ import click
 import json
 from pathlib import Path
 from .core import S3DockerManager
+import ultraprint.common as p
+from halo import Halo
 
 def load_configs():
     config_dir = Path.home() / '.s3docker'
     config_file = config_dir / 'configs.json'
-    if config_file.exists():
+    if (config_file.exists()):
         with open(config_file) as f:
             return json.load(f)
     return {}
@@ -27,99 +29,109 @@ def config():
     """Configure a new S3Docker profile"""
     configs = load_configs()
     
-    click.echo("S3Docker Configuration Wizard")
-    click.echo("-" * 30)
+    p.cyan_bg("\n🔧 S3Docker Configuration Wizard")
+    p.cyan("=" * 40)
     
-    # Get profile name
     while True:
         name = click.prompt(
-            "\nEnter profile name (leave empty for 'default')",
+            p.yellow("\nEnter profile name (leave empty for 'default')"),
             default='default'
         )
         if name in configs:
-            if not click.confirm(f"Profile '{name}' already exists. Overwrite?"):
+            if not click.confirm(p.red(f"Profile '{name}' already exists. Overwrite?")):
                 continue
         break
     
     config = {}
-    click.echo(f"\nConfiguring profile: {click.style(name, fg='green')}")
-    click.echo("Enter your AWS credentials and settings:")
-    config['aws_access_key_id'] = click.prompt("  AWS Access Key ID")
-    config['aws_secret_access_key'] = click.prompt("  AWS Secret Access Key")
-    config['aws_region'] = click.prompt("  AWS Region", default="us-east-1")
-    config['bucket'] = click.prompt("  S3 Bucket name")
-    config['s3_path'] = click.prompt("  S3 Path prefix", default="docker-images")
+    p.green(f"\n📝 Configuring profile: {name}")
+    p.blue("Enter your AWS credentials and settings:")
+    config['aws_access_key_id'] = click.prompt(p.cyan("  AWS Access Key ID"))
+    config['aws_secret_access_key'] = click.prompt(p.cyan("  AWS Secret Access Key"))
+    config['aws_region'] = click.prompt(p.cyan("  AWS Region"), default="us-east-1")
+    config['bucket'] = click.prompt(p.cyan("  S3 Bucket name"))
+    config['s3_path'] = click.prompt(p.cyan("  S3 Path prefix"), default="docker-images")
 
     configs[name] = config
     save_configs(configs)
-    click.echo(f"\n✨ Configuration '{name}' saved successfully!")
+    p.green(f"\n✨ Configuration '{name}' saved successfully!")
 
 @cli.command()
 def configs():
     """List all available configurations"""
     configs = load_configs()
     if not configs:
-        click.echo("No configurations found. Create one using 's3docker config'")
+        p.red("No configurations found. Create one using 's3docker config'")
         return
     
-    click.echo("\nAvailable configurations:")
-    click.echo("-" * 30)
+    p.cyan_bg("\n📋 Available configurations")
+    p.cyan("=" * 40)
+    
     for name in configs:
         config = configs[name]
-        click.echo(f"\n{click.style(name, fg='green')}:")
-        click.echo(f"  Region: {config['aws_region']}")
-        click.echo(f"  Bucket: {config['bucket']}")
-        click.echo(f"  Path: {config['s3_path']}")
+        p.green(f"\n🔹 {name}:")
+        p.blue(f"  Region: {config['aws_region']}")
+        p.blue(f"  Bucket: {config['bucket']}")
+        p.blue(f"  Path: {config['s3_path']}")
 
 @cli.command()
 @click.option('--from', 'from_', default='default', help='Configuration to use')
 def list(from_):
     """List all Docker images in S3"""
     try:
+        spinner = Halo(text='Fetching images...', spinner='dots')
+        spinner.start()
+        
         manager = S3DockerManager(from_)
         images = manager.list_images()
         
+        spinner.stop()
+        
         if not images:
-            click.echo(f"No images found in configuration '{from_}'")
+            p.yellow(f"No images found in configuration '{from_}'")
             return
             
-        click.echo(f"\nDocker images in '{from_}' configuration:")
-        click.echo("-" * 50)
+        p.cyan_bg(f"\n📦 Docker images in '{from_}' configuration")
+        p.cyan("=" * 50)
         
         for img in images:
             size_mb = img['size'] / (1024 * 1024)
             modified = img['last_modified'].strftime('%Y-%m-%d %H:%M:%S')
-            click.echo(f"\n{click.style(img['name'], fg='green')}")
-            click.echo(f"  Size: {size_mb:.1f} MB")
-            click.echo(f"  Modified: {modified}")
+            p.green(f"\n🐳 {img['name']}")
+            p.blue(f"  Size: {size_mb:.1f} MB")
+            p.blue(f"  Modified: {modified}")
             
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        spinner.stop()
+        p.red(f"Error: {str(e)}")
 
 @cli.command()
 @click.argument('image_name')
 @click.option('--to', default='default', help='Configuration to use')
 @click.option('--replace', is_flag=True, help='Replace existing image in S3')
-def push(image_name, to, replace):
+@click.option('--temp', help='Temporary directory path for storing intermediate files')
+def push(image_name, to, replace, temp):
     """Push a Docker image to S3"""
     try:
-        manager = S3DockerManager(to)
+        p.cyan(f"🚀 Pushing {image_name} to S3...")
+        manager = S3DockerManager(to, temp_dir=temp)
         manager.push(image_name, replace)
-        click.echo(f"Successfully pushed {image_name} to S3 using '{to}' config")
+        p.green(f"✨ Successfully pushed {image_name} to S3 using '{to}' config")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        p.red(f"❌ Error: {str(e)}")
 
 @cli.command()
 @click.argument('image_name')
 @click.option('--from', 'from_', default='default', help='Configuration to use')
-def pull(image_name, from_):
+@click.option('--temp', help='Temporary directory path for storing intermediate files')
+def pull(image_name, from_, temp):
     """Pull a Docker image from S3"""
     try:
-        manager = S3DockerManager(from_)
+        p.cyan(f"📥 Pulling {image_name} from S3...")
+        manager = S3DockerManager(from_, temp_dir=temp)
         manager.pull(image_name)
-        click.echo(f"Successfully pulled {image_name} from S3 using '{from_}' config")
+        p.green(f"✨ Successfully pulled {image_name} from S3 using '{from_}' config")
     except Exception as e:
-        click.echo(f"Error: {str(e)}", err=True)
+        p.red(f"❌ Error: {str(e)}")
 
 if __name__ == '__main__':
     cli()

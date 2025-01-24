@@ -78,6 +78,10 @@ s3docker push myapp:latest --to prod
 
 # Replace existing image
 s3docker push myapp:latest --replace
+
+# Specify temporary directory
+s3docker push myapp:latest --temp /path/to/temp
+s3docker push myapp:latest --temp .  # Use current directory
 ```
 
 ### Pulling Images from S3
@@ -88,6 +92,10 @@ s3docker pull myapp:latest
 
 # Using specific profile
 s3docker pull myapp:latest --from prod
+
+# Specify temporary directory
+s3docker pull myapp:latest --temp /path/to/temp
+s3docker pull myapp:latest --temp .  # Use current directory
 ```
 
 ### Listing Available Images

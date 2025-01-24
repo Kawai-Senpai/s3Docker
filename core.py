@@ -5,12 +5,16 @@ import json
 from pathlib import Path
 import tempfile
 import time
+import uuid
+import ultraprint.common as p
+from tqdm import tqdm
 
 class S3DockerManager:
-    def __init__(self, config_name='default'):
+    def __init__(self, config_name='default', temp_dir=None):
         self.config = self._load_config(config_name)
         self.s3_client = self._init_s3_client()
         self.docker_client = docker.from_env()
+        self.temp_dir = temp_dir
 
     def _load_config(self, config_name):
         config_dir = Path.home() / '.s3docker'
@@ -34,54 +38,108 @@ class S3DockerManager:
             region_name=self.config['aws_region']
         ).client('s3')
 
-    def push(self, image_name, replace=False):
-        # Save image to temporary tar file
-        temp_dir = tempfile.mkdtemp()
-        tar_path = os.path.join(temp_dir, f"{image_name}.tar")
-        
-        image = self.docker_client.images.get(image_name)
-        with open(tar_path, 'wb') as f:
-            for chunk in image.save():
-                f.write(chunk)
+    def _create_temp_dir(self):
+        if self.temp_dir:
+            # Create a random named directory within specified temp_dir
+            tmp_path = Path(self.temp_dir) / f"s3docker-{uuid.uuid4().hex[:8]}"
+            tmp_path.mkdir(parents=True, exist_ok=True)
+            return str(tmp_path)
+        return tempfile.mkdtemp()
 
-        # Handle existing file in S3
-        s3_key = f"{self.config['s3_path']}/{image_name}.tar"
+    def _get_file_size(self, image):
+        """Get total size of Docker image tar"""
+        size = 0
+        for chunk in image.save(named=True):
+            size += len(chunk)
+        return size
+
+    def push(self, image_name, replace=False):
+        # Create temporary directory
+        temp_dir = self._create_temp_dir()
+        tar_path = os.path.join(temp_dir, f"{image_name}.tar")
         
         try:
-            if not replace:
-                self.s3_client.head_object(Bucket=self.config['bucket'], Key=s3_key)
-                # If file exists, move it to archive
-                archive_key = f"{self.config['s3_path']}/archive/{image_name}_{int(time.time())}.tar"
-                self.s3_client.copy_object(
-                    Bucket=self.config['bucket'],
-                    CopySource={'Bucket': self.config['bucket'], 'Key': s3_key},
-                    Key=archive_key
-                )
-        except:
-            pass  # File doesn't exist, proceed with upload
+            p.cyan("📦 Preparing Docker image...")
+            image = self.docker_client.images.get(image_name)
+            total_size = self._get_file_size(image)
 
-        # Upload to S3
-        self.s3_client.upload_file(tar_path, self.config['bucket'], s3_key)
-        
-        # Cleanup
-        os.remove(tar_path)
-        os.rmdir(temp_dir)
+            with open(tar_path, 'wb') as f:
+                with tqdm(total=total_size, unit='B', unit_scale=True, desc="Saving image") as pbar:
+                    for chunk in image.save(named=True):
+                        f.write(chunk)
+                        pbar.update(len(chunk))
+
+            # Handle existing file in S3
+            s3_key = f"{self.config['s3_path']}/{image_name}.tar"
+            
+            try:
+                if not replace:
+                    p.yellow("🔍 Checking for existing image...")
+                    self.s3_client.head_object(Bucket=self.config['bucket'], Key=s3_key)
+                    # If file exists, move it to archive
+                    archive_key = f"{self.config['s3_path']}/archive/{image_name}_{int(time.time())}.tar"
+                    p.blue("📁 Archiving existing image...")
+                    self.s3_client.copy_object(
+                        Bucket=self.config['bucket'],
+                        CopySource={'Bucket': self.config['bucket'], 'Key': s3_key},
+                        Key=archive_key
+                    )
+            except:
+                pass  # File doesn't exist, proceed with upload
+
+            p.cyan("☁️ Uploading to S3...")
+            file_size = os.path.getsize(tar_path)
+            with tqdm(total=file_size, unit='B', unit_scale=True, desc="Uploading") as pbar:
+                self.s3_client.upload_file(
+                    tar_path,
+                    self.config['bucket'],
+                    s3_key,
+                    Callback=lambda bytes_transferred: pbar.update(bytes_transferred)
+                )
+        finally:
+            p.blue("🧹 Cleaning up temporary files...")
+            try:
+                os.remove(tar_path)
+                os.rmdir(temp_dir)
+            except:
+                pass  # Best effort cleanup
 
     def pull(self, image_name):
-        # Download from S3
-        temp_dir = tempfile.mkdtemp()
+        # Create temporary directory
+        temp_dir = self._create_temp_dir()
         tar_path = os.path.join(temp_dir, f"{image_name}.tar")
         
-        s3_key = f"{self.config['s3_path']}/{image_name}.tar"
-        self.s3_client.download_file(self.config['bucket'], s3_key, tar_path)
+        try:
+            s3_key = f"{self.config['s3_path']}/{image_name}.tar"
+            
+            # Get file size for progress bar
+            p.cyan("📊 Getting image information...")
+            obj = self.s3_client.head_object(Bucket=self.config['bucket'], Key=s3_key)
+            file_size = obj['ContentLength']
 
-        # Load image
-        with open(tar_path, 'rb') as f:
-            self.docker_client.images.load(f)
+            p.cyan("☁️ Downloading from S3...")
+            with tqdm(total=file_size, unit='B', unit_scale=True, desc="Downloading") as pbar:
+                self.s3_client.download_file(
+                    self.config['bucket'],
+                    s3_key,
+                    tar_path,
+                    Callback=lambda bytes_transferred: pbar.update(bytes_transferred)
+                )
 
-        # Cleanup
-        os.remove(tar_path)
-        os.rmdir(temp_dir)
+            p.cyan("🐳 Loading image into Docker...")
+            with open(tar_path, 'rb') as f:
+                total_size = os.path.getsize(tar_path)
+                with tqdm(total=total_size, unit='B', unit_scale=True, desc="Loading image") as pbar:
+                    for response in self.docker_client.images.load(f):
+                        if 'id' in response:
+                            pbar.update(total_size)  # Update on successful load
+        finally:
+            p.blue("🧹 Cleaning up temporary files...")
+            try:
+                os.remove(tar_path)
+                os.rmdir(temp_dir)
+            except:
+                pass  # Best effort cleanup
 
     def list_images(self):
         """List all Docker images in the S3 bucket"""
