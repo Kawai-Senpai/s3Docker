@@ -96,6 +96,9 @@ s3docker pull myapp:latest --from prod
 # Specify temporary directory
 s3docker pull myapp:latest --temp /path/to/temp
 s3docker pull myapp:latest --temp .  # Use current directory
+
+# Increase timeout for large images or slow connections
+s3docker pull myapp:latest --timeout 300  # 5 minutes timeout
 ```
 
 ### Listing Available Images
@@ -139,6 +142,30 @@ s3docker list --from prod
    - Use specific tags instead of 'latest'
    - Utilize --replace flag carefully
    - Regular cleanup of archived versions
+
+## 🔧 Troubleshooting
+
+### Docker Timeout Issues
+
+If you encounter timeout errors, especially with large images or on slower systems:
+
+1. Increase the timeout value:
+```bash
+s3docker pull myapp:latest --timeout 300  # Set 5 minutes timeout
+```
+
+2. Check Docker daemon status:
+```bash
+systemctl status docker  # For Linux
+docker info  # For general Docker information
+```
+
+3. Verify Docker permissions:
+```bash
+# Add current user to docker group
+sudo usermod -aG docker $USER
+newgrp docker
+```
 
 ## 🤝 Contributing
 

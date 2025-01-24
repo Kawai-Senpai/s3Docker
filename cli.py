@@ -109,13 +109,16 @@ def list(from_):
 @click.option('--to', default='default', help='Configuration to use')
 @click.option('--replace', is_flag=True, help='Replace existing image in S3')
 @click.option('--temp', help='Temporary directory path for storing intermediate files')
-def push(image_name, to, replace, temp):
+@click.option('--timeout', default=120, help='Docker operation timeout in seconds')
+def push(image_name, to, replace, temp, timeout):
     """Push a Docker image to S3"""
     try:
         p.cyan(f"🚀 Pushing {image_name} to S3...")
-        manager = S3DockerManager(to, temp_dir=temp)
+        manager = S3DockerManager(to, temp_dir=temp, timeout=timeout)
         manager.push(image_name, replace)
         p.green(f"✨ Successfully pushed {image_name} to S3 using '{to}' config")
+    except TimeoutError as e:
+        p.red(f"⏰ {str(e)}")
     except Exception as e:
         p.red(f"❌ Error: {str(e)}")
 
@@ -123,13 +126,16 @@ def push(image_name, to, replace, temp):
 @click.argument('image_name')
 @click.option('--from', 'from_', default='default', help='Configuration to use')
 @click.option('--temp', help='Temporary directory path for storing intermediate files')
-def pull(image_name, from_, temp):
+@click.option('--timeout', default=120, help='Docker operation timeout in seconds')
+def pull(image_name, from_, temp, timeout):
     """Pull a Docker image from S3"""
     try:
         p.cyan(f"📥 Pulling {image_name} from S3...")
-        manager = S3DockerManager(from_, temp_dir=temp)
+        manager = S3DockerManager(from_, temp_dir=temp, timeout=timeout)
         manager.pull(image_name)
         p.green(f"✨ Successfully pulled {image_name} from S3 using '{from_}' config")
+    except TimeoutError as e:
+        p.red(f"⏰ {str(e)}")
     except Exception as e:
         p.red(f"❌ Error: {str(e)}")
 

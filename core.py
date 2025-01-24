@@ -8,13 +8,21 @@ import time
 import uuid
 import ultraprint.common as p
 from tqdm import tqdm
+from docker.errors import DockerException
+import io
 
 class S3DockerManager:
-    def __init__(self, config_name='default', temp_dir=None):
+    def __init__(self, config_name='default', temp_dir=None, timeout=120):
         self.config = self._load_config(config_name)
         self.s3_client = self._init_s3_client()
-        self.docker_client = docker.from_env()
+        self.timeout = timeout
         self.temp_dir = temp_dir
+        try:
+            self.docker_client = docker.from_env(timeout=self.timeout)
+            # Test connection
+            self.docker_client.ping()
+        except DockerException as e:
+            raise ConnectionError(f"Failed to connect to Docker daemon: {str(e)}\nPlease ensure Docker is running and you have proper permissions.")
 
     def _load_config(self, config_name):
         config_dir = Path.home() / '.s3docker'
@@ -127,12 +135,37 @@ class S3DockerManager:
                 )
 
             p.cyan("🐳 Loading image into Docker...")
-            with open(tar_path, 'rb') as f:
-                total_size = os.path.getsize(tar_path)
-                with tqdm(total=total_size, unit='B', unit_scale=True, desc="Loading image") as pbar:
-                    for response in self.docker_client.images.load(f):
-                        if 'id' in response:
-                            pbar.update(total_size)  # Update on successful load
+            try:
+                with open(tar_path, 'rb') as f:
+                    total_size = os.path.getsize(tar_path)
+                    with tqdm(total=total_size, unit='B', unit_scale=True, desc="Loading image") as pbar:
+                        try:
+                            # Use simple load_image with file path
+                            self.docker_client.images.load(f)
+                            pbar.update(total_size)
+                        except DockerException as e:
+                            if "timeout" in str(e).lower():
+                                raise TimeoutError(
+                                    f"Docker operation timed out after {self.timeout}s. "
+                                    "Try increasing timeout with --timeout option or check Docker daemon status."
+                                )
+                            else:
+                                raise DockerException(f"Error loading image: {str(e)}")
+
+                # Verify the image was loaded
+                try:
+                    self.docker_client.images.get(image_name)
+                except DockerException:
+                    raise DockerException(
+                        f"Image {image_name} wasn't properly loaded. "
+                        "The file might be corrupted or incomplete."
+                    )
+
+            except IOError as e:
+                raise IOError(f"IO Error: {str(e)}")
+            except Exception as e:
+                raise Exception(f"Unexpected error during image load: {str(e)}")
+
         finally:
             p.blue("🧹 Cleaning up temporary files...")
             try:
